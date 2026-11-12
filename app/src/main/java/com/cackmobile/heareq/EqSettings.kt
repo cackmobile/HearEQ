@@ -83,6 +83,40 @@ class EqSettings(context: Context) {
         return next
     }
 
+    // ---- Tinnitus noise ----
+
+    var tinnitusOn: Boolean
+        get() = prefs.getBoolean(KEY_TIN_ON, false)
+        set(v) = prefs.edit().putBoolean(KEY_TIN_ON, v).apply()
+
+    var tinnitusType: Int
+        get() = prefs.getInt(KEY_TIN_TYPE, Noise.PINK).coerceIn(0, Noise.NAMES.size - 1)
+        set(v) = prefs.edit().putInt(KEY_TIN_TYPE, v).apply()
+
+    var tinnitusLeft: Boolean
+        get() = prefs.getBoolean(KEY_TIN_LEFT, true)
+        set(v) = prefs.edit().putBoolean(KEY_TIN_LEFT, v).apply()
+
+    var tinnitusRight: Boolean
+        get() = prefs.getBoolean(KEY_TIN_RIGHT, true)
+        set(v) = prefs.edit().putBoolean(KEY_TIN_RIGHT, v).apply()
+
+    /** 0–100 per ear. */
+    var tinnitusLeftLevel: Int
+        get() = prefs.getInt(KEY_TIN_LEFT_LEVEL, 50)
+        set(v) = prefs.edit().putInt(KEY_TIN_LEFT_LEVEL, v).apply()
+
+    var tinnitusRightLevel: Int
+        get() = prefs.getInt(KEY_TIN_RIGHT_LEVEL, 50)
+        set(v) = prefs.edit().putInt(KEY_TIN_RIGHT_LEVEL, v).apply()
+
+    fun earsLabel(): String = when {
+        tinnitusLeft && tinnitusRight -> "left + right"
+        tinnitusLeft -> "left only"
+        tinnitusRight -> "right only"
+        else -> "no ear selected"
+    }
+
     /** Lets the app screen know something outside it (the notification) changed the settings. */
     fun markExternalChange() = prefs.edit().putLong(KEY_EXTERNAL_CHANGE, System.currentTimeMillis()).apply()
 
@@ -117,6 +151,12 @@ class EqSettings(context: Context) {
         const val KEY_GAINS = "gains_db"
         const val KEY_PRESET = "preset_name"
         const val KEY_PAUSED = "paused"
+        const val KEY_TIN_ON = "tinnitus_on"
+        const val KEY_TIN_TYPE = "tinnitus_type"
+        const val KEY_TIN_LEFT = "tinnitus_left"
+        const val KEY_TIN_RIGHT = "tinnitus_right"
+        const val KEY_TIN_LEFT_LEVEL = "tinnitus_left_level"
+        const val KEY_TIN_RIGHT_LEVEL = "tinnitus_right_level"
         const val KEY_EXTERNAL_CHANGE = "external_change"
         private const val CUSTOM_PREFIX = "custom_preset_"
     }

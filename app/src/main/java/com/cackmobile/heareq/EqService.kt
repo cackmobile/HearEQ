@@ -28,12 +28,14 @@ class EqService : Service() {
         val running: Boolean,
         val active: Boolean,
         val paused: Boolean,
+        val noisePlaying: Boolean,
         val hearingAid: String?,
         val globalAttached: Boolean,
         val appSessions: Int,
     )
 
     private val engine = EqEngine()
+    private val noise = NoiseGenerator()
     private lateinit var settings: EqSettings
     private lateinit var audioManager: AudioManager
     private val handler = Handler(Looper.getMainLooper())
@@ -109,8 +111,9 @@ class EqService : Service() {
         settings.prefs.unregisterOnSharedPreferenceChangeListener(prefListener)
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
         runCatching { unregisterReceiver(sessionReceiver) }
+        noise.stop()
         engine.release()
-        current = Status(false, false, false, null, false, 0)
+        current = Status(false, false, false, false, null, false, 0)
         listener?.invoke(current)
         super.onDestroy()
     }
@@ -120,8 +123,18 @@ class EqService : Service() {
     private fun refreshActive() {
         val s = settings.snapshot()
         val aid = HearingDevices.connected(audioManager)
-        val on = s.enabled && !settings.paused && (!s.onlyHearingAids || aid != null)
+        val outputOk = !s.onlyHearingAids || aid != null
+        val on = s.enabled && !settings.paused && outputOk
         engine.setActive(on)
+
+        // Tinnitus noise: only plays to the hearing aids (unless you allowed all outputs).
+        noise.type = settings.tinnitusType
+        noise.leftGain = if (settings.tinnitusLeft) NoiseGenerator.levelToGain(settings.tinnitusLeftLevel) else 0f
+        noise.rightGain = if (settings.tinnitusRight) NoiseGenerator.levelToGain(settings.tinnitusRightLevel) else 0f
+        val noiseOn = settings.tinnitusOn && !settings.paused && outputOk &&
+            (settings.tinnitusLeft || settings.tinnitusRight)
+        if (noiseOn) noise.start() else noise.stop()
+
         updateNotification(on, aid?.let { HearingDevices.describe(it) })
         publish(on, aid?.let { HearingDevices.describe(it) })
     }
@@ -130,7 +143,7 @@ class EqService : Service() {
         active: Boolean = current.active,
         aid: String? = HearingDevices.connected(audioManager)?.let { HearingDevices.describe(it) },
     ) {
-        current = Status(true, active, settings.paused, aid, engine.globalAttached, engine.sessionCount)
+        current = Status(true, active, settings.paused, noise.isPlaying, aid, engine.globalAttached, engine.sessionCount)
         listener?.invoke(current)
     }
 
@@ -162,11 +175,14 @@ class EqService : Service() {
         )
         val paused = settings.paused
         val preset = settings.presetName
+        val noiseLine = if (settings.tinnitusOn)
+            "Noise: ${Noise.NAMES[settings.tinnitusType]} (${settings.earsLabel()})" else null
+        val eqLine = if (settings.enabled) "EQ: $preset" else null
+        val parts = listOfNotNull(eqLine, noiseLine).joinToString(" • ")
         val (title, text) = when {
-            paused -> "Equaliser paused" to "$preset • tap Resume to turn it back on"
-            active && aid != null -> "Equaliser on: $preset" to aid
-            active -> "Equaliser on: $preset" to "All outputs"
-            else -> "Equaliser waiting" to "$preset • starts when your hearing aids connect"
+            paused -> "HearEQ paused" to "$parts • tap Resume to turn it back on"
+            active || noise.isPlaying -> "HearEQ on" to (parts + (aid?.let { " • $it" } ?: ""))
+            else -> "HearEQ waiting" to "$parts • starts when your hearing aids connect"
         }
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_eq)
@@ -200,7 +216,7 @@ class EqService : Service() {
         const val ACTION_PREV_PRESET = "com.cackmobile.heareq.PREV_PRESET"
 
         @Volatile
-        var current = Status(false, false, false, null, false, 0)
+        var current = Status(false, false, false, false, null, false, 0)
             private set
 
         /** The screen subscribes here to show live status. Called on the main thread. */

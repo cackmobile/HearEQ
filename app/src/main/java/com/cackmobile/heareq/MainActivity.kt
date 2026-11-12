@@ -41,6 +41,17 @@ class MainActivity : Activity() {
     private val bandBars = ArrayList<SeekBar>()
     private val bandValues = ArrayList<TextView>()
 
+    private lateinit var tinSwitch: Switch
+    private lateinit var tinTypeSpinner: Spinner
+    private lateinit var tinDescription: TextView
+    private lateinit var tinLeftSwitch: Switch
+    private lateinit var tinRightSwitch: Switch
+    private lateinit var tinLeftBar: SeekBar
+    private lateinit var tinRightBar: SeekBar
+    private lateinit var tinLeftValue: TextView
+    private lateinit var tinRightValue: TextView
+    private var tinTypePos = -1
+
     private var presetNames: List<String> = emptyList()
     /** Spinner position we set ourselves, so the spinner's own callbacks don't re-apply it. */
     private var spinnerPos = -1
@@ -54,7 +65,7 @@ class MainActivity : Activity() {
         loadFromSettings()
         askForNotifications()
         handleIntent(intent)
-        if (settings.enabled) EqService.start(this)
+        if (settings.enabled || settings.tinnitusOn) EqService.start(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -122,7 +133,7 @@ class MainActivity : Activity() {
                 if (suppress) return@setOnCheckedChangeListener
                 settings.enabled = on
                 if (on) settings.paused = false
-                if (on) EqService.start(this@MainActivity) else EqService.stop(this@MainActivity)
+                syncService()
             }
         }
         col.addView(enableSwitch, lp(top = 16))
@@ -189,6 +200,8 @@ class MainActivity : Activity() {
             col.addView(row, lp(top = 2))
         }
 
+        buildTinnitusSection(col)
+
         col.addView(TextView(this).apply {
             text = "Tips\n" +
                 "• Low numbers (31–250 Hz) are bass, 500 Hz–2k is voices, 4k–16k is treble and detail.\n" +
@@ -215,6 +228,100 @@ class MainActivity : Activity() {
             insets
         }
         return scroll
+    }
+
+    private fun buildTinnitusSection(col: LinearLayout) {
+        col.addView(sectionTitle("Tinnitus relief"), lp(top = 28))
+        col.addView(TextView(this).apply {
+            text = "Plays soft background noise to your hearing aids to help mask ringing. " +
+                "Set it just below the level of your tinnitus, not over the top of it."
+            textSize = 13f
+            alpha = 0.7f
+        })
+
+        tinSwitch = Switch(this).apply {
+            text = "Play tinnitus noise"
+            textSize = 17f
+            setOnCheckedChangeListener { _, on ->
+                if (suppress) return@setOnCheckedChangeListener
+                settings.tinnitusOn = on
+                if (on) settings.paused = false
+                syncService()
+            }
+        }
+        col.addView(tinSwitch, lp(top = 12))
+
+        tinTypeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, Noise.NAMES)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    tinDescription.text = Noise.DESCRIPTIONS[pos]
+                    if (suppress || pos == tinTypePos) return
+                    tinTypePos = pos
+                    settings.tinnitusType = pos
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+        col.addView(TextView(this).apply { text = "Noise type"; textSize = 14f }, lp(top = 12))
+        col.addView(tinTypeSpinner, lp(top = 2))
+
+        tinDescription = TextView(this).apply {
+            textSize = 13f
+            alpha = 0.75f
+        }
+        col.addView(tinDescription, lp(top = 2))
+
+        val (lRow, lSw, lBar, lVal) = earRow("Left ear",
+            onToggle = { settings.tinnitusLeft = it },
+            onLevel = { settings.tinnitusLeftLevel = it })
+        tinLeftSwitch = lSw; tinLeftBar = lBar; tinLeftValue = lVal
+        col.addView(lRow, lp(top = 12))
+
+        val (rRow, rSw, rBar, rVal) = earRow("Right ear",
+            onToggle = { settings.tinnitusRight = it },
+            onLevel = { settings.tinnitusRightLevel = it })
+        tinRightSwitch = rSw; tinRightBar = rBar; tinRightValue = rVal
+        col.addView(rRow, lp(top = 8))
+    }
+
+    private data class EarRow(val row: View, val toggle: Switch, val bar: SeekBar, val value: TextView)
+
+    /** An on/off switch for one ear plus its level slider (0–100). */
+    private fun earRow(label: String, onToggle: (Boolean) -> Unit, onLevel: (Int) -> Unit): EarRow {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val toggle = Switch(this).apply {
+            text = label
+            textSize = 15f
+            setOnCheckedChangeListener { _, on -> if (!suppress) onToggle(on) }
+        }
+        box.addView(toggle)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(TextView(this).apply { text = "Level"; textSize = 14f }, LinearLayout.LayoutParams(dp(72), WRAP_CONTENT))
+        val value = TextView(this).apply { textSize = 14f; gravity = Gravity.END }
+        val bar = SeekBar(this).apply {
+            max = 100
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) {
+                    value.text = "$progress%"
+                    if (fromUser && !suppress) onLevel(progress)
+                }
+                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStopTrackingTouch(s: SeekBar) {}
+            })
+        }
+        row.addView(bar, LinearLayout.LayoutParams(0, dp(44), 1f))
+        row.addView(value, LinearLayout.LayoutParams(dp(64), WRAP_CONTENT))
+        box.addView(row)
+        return EarRow(box, toggle, bar, value)
+    }
+
+    /** Keep the background service running while the equaliser or the noise is switched on. */
+    private fun syncService() {
+        if (settings.enabled || settings.tinnitusOn) EqService.start(this) else EqService.stop(this)
     }
 
     /** A labelled slider in 0.5 dB steps. */
@@ -258,6 +365,16 @@ class MainActivity : Activity() {
         setBar(preampBar, preampValue, settings.preampDb, Bands.PREAMP_MIN_DB)
         showGains(settings.gainsDb)
         reloadPresets(settings.presetName)
+        tinSwitch.isChecked = settings.tinnitusOn
+        tinTypePos = settings.tinnitusType
+        tinTypeSpinner.setSelection(tinTypePos, false)
+        tinDescription.text = Noise.DESCRIPTIONS[tinTypePos]
+        tinLeftSwitch.isChecked = settings.tinnitusLeft
+        tinRightSwitch.isChecked = settings.tinnitusRight
+        tinLeftBar.progress = settings.tinnitusLeftLevel
+        tinLeftValue.text = "${settings.tinnitusLeftLevel}%"
+        tinRightBar.progress = settings.tinnitusRightLevel
+        tinRightValue.text = "${settings.tinnitusRightLevel}%"
         suppress = false
     }
 
@@ -339,17 +456,24 @@ class MainActivity : Activity() {
         val headline = when {
             !s.running -> "Equaliser is off."
             s.paused -> "Paused from the notification. Tap Resume there, or switch the equaliser off and on here."
+            !settings.enabled -> "Equaliser is off."
             s.active && s.hearingAid != null -> "On: shaping music to ${s.hearingAid}."
             s.active -> "On: shaping music on all outputs."
             else -> "Paused: waiting for your hearing aids to connect."
         }
+        val noiseLine = when {
+            !s.running || s.paused || !settings.tinnitusOn -> ""
+            s.noisePlaying -> "\nTinnitus noise: ${Noise.NAMES[settings.tinnitusType]}, ${settings.earsLabel()}."
+            !settings.tinnitusLeft && !settings.tinnitusRight -> "\nTinnitus noise is on, but no ear is selected."
+            else -> "\nTinnitus noise is waiting for your hearing aids to connect."
+        }
         val coverage = when {
-            !s.running -> ""
+            !s.running || s.paused || !settings.enabled -> ""
             s.globalAttached -> "\nWorking across all apps."
             s.appSessions > 0 -> "\nConnected to ${s.appSessions} music app session(s)."
             else -> "\nThis phone doesn't allow all-apps mode. Start playing music, or pick HearEQ in your music app's Equaliser setting."
         }
-        statusText.text = headline + coverage
+        statusText.text = headline + coverage + noiseLine
     }
 
     private fun askForNotifications() {
