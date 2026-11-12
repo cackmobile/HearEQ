@@ -98,6 +98,17 @@ class EqService : Service() {
             }
             ACTION_NEXT_PRESET -> settings.cyclePreset(+1)
             ACTION_PREV_PRESET -> settings.cyclePreset(-1)
+            ACTION_TOGGLE_NOISE -> {
+                val on = !settings.tinnitusOn
+                settings.tinnitusOn = on
+                if (on) settings.paused = false   // tapping Start noise should actually play it
+                settings.markExternalChange()
+                // Nothing left to do if the equaliser is off too.
+                if (!on && !settings.enabled) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+            }
         }
         // A music app opened our panel and passed its session along.
         intent?.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, -1)?.takeIf { it > 0 }?.let {
@@ -191,12 +202,16 @@ class EqService : Service() {
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(action(R.drawable.ic_prev, "Prev preset", ACTION_PREV_PRESET, 1))
+            // Android shows at most three buttons.
+            .addAction(action(R.drawable.ic_next, "Next preset", ACTION_NEXT_PRESET, 3))
             .addAction(
                 if (paused) action(R.drawable.ic_play, "Resume", ACTION_TOGGLE_PAUSE, 2)
                 else action(R.drawable.ic_pause, "Pause", ACTION_TOGGLE_PAUSE, 2)
             )
-            .addAction(action(R.drawable.ic_next, "Next preset", ACTION_NEXT_PRESET, 3))
+            .addAction(
+                if (settings.tinnitusOn) action(R.drawable.ic_noise, "Stop noise", ACTION_TOGGLE_NOISE, 4)
+                else action(R.drawable.ic_noise, "Start noise", ACTION_TOGGLE_NOISE, 4)
+            )
             .build()
     }
 
@@ -214,6 +229,7 @@ class EqService : Service() {
         const val ACTION_TOGGLE_PAUSE = "com.cackmobile.heareq.TOGGLE_PAUSE"
         const val ACTION_NEXT_PRESET = "com.cackmobile.heareq.NEXT_PRESET"
         const val ACTION_PREV_PRESET = "com.cackmobile.heareq.PREV_PRESET"
+        const val ACTION_TOGGLE_NOISE = "com.cackmobile.heareq.TOGGLE_NOISE"
 
         @Volatile
         var current = Status(false, false, false, false, null, false, 0)
