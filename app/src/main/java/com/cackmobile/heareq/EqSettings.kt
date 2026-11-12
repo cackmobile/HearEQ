@@ -64,6 +64,28 @@ class EqSettings(context: Context) {
         get() = prefs.getString(KEY_PRESET, "Flat") ?: "Flat"
         set(v) = prefs.edit().putString(KEY_PRESET, v).apply()
 
+    /** Paused from the notification. The service keeps running so the buttons stay available. */
+    var paused: Boolean
+        get() = prefs.getBoolean(KEY_PAUSED, false)
+        set(v) = prefs.edit().putBoolean(KEY_PAUSED, v).apply()
+
+    /** Switch to the next/previous saved preset (skips the unsaved "Custom" state). */
+    fun cyclePreset(step: Int): String {
+        val all = allPresets()
+        val names = all.keys.toList()
+        val cur = names.indexOf(presetName)
+        val next = names[Math.floorMod(if (cur < 0) (if (step > 0) -1 else 0) + step else cur + step, names.size)]
+        prefs.edit()
+            .putString(KEY_GAINS, encode(all.getValue(next)))
+            .putString(KEY_PRESET, next)
+            .putLong(KEY_EXTERNAL_CHANGE, System.currentTimeMillis())
+            .apply()
+        return next
+    }
+
+    /** Lets the app screen know something outside it (the notification) changed the settings. */
+    fun markExternalChange() = prefs.edit().putLong(KEY_EXTERNAL_CHANGE, System.currentTimeMillis()).apply()
+
     fun snapshot() = EqSnapshot(enabled, onlyHearingAids, preampDb, gainsDb)
 
     /** Built-in presets followed by the ones you've saved. */
@@ -94,6 +116,8 @@ class EqSettings(context: Context) {
         const val KEY_PREAMP = "preamp_db"
         const val KEY_GAINS = "gains_db"
         const val KEY_PRESET = "preset_name"
+        const val KEY_PAUSED = "paused"
+        const val KEY_EXTERNAL_CHANGE = "external_change"
         private const val CUSTOM_PREFIX = "custom_preset_"
     }
 }

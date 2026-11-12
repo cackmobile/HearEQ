@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -26,6 +27,7 @@ class EqService : Service() {
     data class Status(
         val running: Boolean,
         val active: Boolean,
+        val paused: Boolean,
         val hearingAid: String?,
         val globalAttached: Boolean,
         val appSessions: Int,
@@ -86,6 +88,15 @@ class EqService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Notification buttons
+        when (intent?.action) {
+            ACTION_TOGGLE_PAUSE -> {
+                settings.paused = !settings.paused
+                settings.markExternalChange()
+            }
+            ACTION_NEXT_PRESET -> settings.cyclePreset(+1)
+            ACTION_PREV_PRESET -> settings.cyclePreset(-1)
+        }
         // A music app opened our panel and passed its session along.
         intent?.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, -1)?.takeIf { it > 0 }?.let {
             engine.attach(it)
@@ -99,7 +110,7 @@ class EqService : Service() {
         audioManager.unregisterAudioDeviceCallback(deviceCallback)
         runCatching { unregisterReceiver(sessionReceiver) }
         engine.release()
-        current = Status(false, false, null, false, 0)
+        current = Status(false, false, false, null, false, 0)
         listener?.invoke(current)
         super.onDestroy()
     }
@@ -109,7 +120,7 @@ class EqService : Service() {
     private fun refreshActive() {
         val s = settings.snapshot()
         val aid = HearingDevices.connected(audioManager)
-        val on = s.enabled && (!s.onlyHearingAids || aid != null)
+        val on = s.enabled && !settings.paused && (!s.onlyHearingAids || aid != null)
         engine.setActive(on)
         updateNotification(on, aid?.let { HearingDevices.describe(it) })
         publish(on, aid?.let { HearingDevices.describe(it) })
@@ -119,7 +130,7 @@ class EqService : Service() {
         active: Boolean = current.active,
         aid: String? = HearingDevices.connected(audioManager)?.let { HearingDevices.describe(it) },
     ) {
-        current = Status(true, active, aid, engine.globalAttached, engine.sessionCount)
+        current = Status(true, active, settings.paused, aid, engine.globalAttached, engine.sessionCount)
         listener?.invoke(current)
     }
 
@@ -149,26 +160,47 @@ class EqService : Service() {
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = when {
-            active && aid != null -> "${settings.presetName} • $aid"
-            active -> "${settings.presetName} • all outputs"
-            else -> "Waiting for hearing aids"
+        val paused = settings.paused
+        val preset = settings.presetName
+        val (title, text) = when {
+            paused -> "Equaliser paused" to "$preset • tap Resume to turn it back on"
+            active && aid != null -> "Equaliser on: $preset" to aid
+            active -> "Equaliser on: $preset" to "All outputs"
+            else -> "Equaliser waiting" to "$preset • starts when your hearing aids connect"
         }
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_eq)
-            .setContentTitle(if (active) "Equaliser on" else "Equaliser paused")
+            .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(action(R.drawable.ic_prev, "Prev preset", ACTION_PREV_PRESET, 1))
+            .addAction(
+                if (paused) action(R.drawable.ic_play, "Resume", ACTION_TOGGLE_PAUSE, 2)
+                else action(R.drawable.ic_pause, "Pause", ACTION_TOGGLE_PAUSE, 2)
+            )
+            .addAction(action(R.drawable.ic_next, "Next preset", ACTION_NEXT_PRESET, 3))
             .build()
+    }
+
+    private fun action(icon: Int, label: String, act: String, req: Int): Notification.Action {
+        val pi = PendingIntent.getService(
+            this, req, Intent(this, EqService::class.java).setAction(act),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(Icon.createWithResource(this, icon), label, pi).build()
     }
 
     companion object {
         private const val CHANNEL = "eq"
         private const val NOTIF_ID = 1
+        const val ACTION_TOGGLE_PAUSE = "com.cackmobile.heareq.TOGGLE_PAUSE"
+        const val ACTION_NEXT_PRESET = "com.cackmobile.heareq.NEXT_PRESET"
+        const val ACTION_PREV_PRESET = "com.cackmobile.heareq.PREV_PRESET"
 
         @Volatile
-        var current = Status(false, false, null, false, 0)
+        var current = Status(false, false, false, null, false, 0)
             private set
 
         /** The screen subscribes here to show live status. Called on the main thread. */

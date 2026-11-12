@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.media.audiofx.AudioEffect
@@ -61,13 +62,21 @@ class MainActivity : Activity() {
         handleIntent(intent)
     }
 
+    /** Refresh the sliders when the notification buttons change preset or pause. */
+    private val externalChange = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == EqSettings.KEY_EXTERNAL_CHANGE) loadFromSettings()
+    }
+
     override fun onResume() {
         super.onResume()
+        loadFromSettings()
+        settings.prefs.registerOnSharedPreferenceChangeListener(externalChange)
         EqService.listener = { showStatus(it) }
         showStatus(EqService.current)
     }
 
     override fun onPause() {
+        settings.prefs.unregisterOnSharedPreferenceChangeListener(externalChange)
         EqService.listener = null
         super.onPause()
     }
@@ -112,6 +121,7 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, on ->
                 if (suppress) return@setOnCheckedChangeListener
                 settings.enabled = on
+                if (on) settings.paused = false
                 if (on) EqService.start(this@MainActivity) else EqService.stop(this@MainActivity)
             }
         }
@@ -328,6 +338,7 @@ class MainActivity : Activity() {
     private fun showStatus(s: EqService.Status) {
         val headline = when {
             !s.running -> "Equaliser is off."
+            s.paused -> "Paused from the notification. Tap Resume there, or switch the equaliser off and on here."
             s.active && s.hearingAid != null -> "On: shaping music to ${s.hearingAid}."
             s.active -> "On: shaping music on all outputs."
             else -> "Paused: waiting for your hearing aids to connect."
