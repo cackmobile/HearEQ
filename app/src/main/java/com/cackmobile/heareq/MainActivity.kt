@@ -10,7 +10,10 @@ import android.graphics.Typeface
 import android.media.audiofx.AudioEffect
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -30,6 +33,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity() {
 
     private lateinit var settings: EqSettings
+    private val handler = Handler(Looper.getMainLooper())
 
     private lateinit var statusText: TextView
     private lateinit var enableSwitch: Switch
@@ -300,7 +304,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        row.addView(TextView(this).apply { text = "Level"; textSize = 14f }, LinearLayout.LayoutParams(dp(72), WRAP_CONTENT))
+        row.addView(TextView(this).apply { text = "Level"; textSize = 14f }, LinearLayout.LayoutParams(dp(56), WRAP_CONTENT))
         val value = TextView(this).apply { textSize = 14f; gravity = Gravity.END }
         val bar = SeekBar(this).apply {
             max = 100
@@ -313,8 +317,7 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(s: SeekBar) {}
             })
         }
-        row.addView(bar, LinearLayout.LayoutParams(0, dp(44), 1f))
-        row.addView(value, LinearLayout.LayoutParams(dp(64), WRAP_CONTENT))
+        addStepped(row, bar, value) { onLevel(bar.progress) }
         box.addView(row)
         return EarRow(box, toggle, bar, value)
     }
@@ -322,6 +325,47 @@ class MainActivity : Activity() {
     /** Keep the background service running while the equaliser or the noise is switched on. */
     private fun syncService() {
         if (settings.enabled || settings.tinnitusOn) EqService.start(this) else EqService.stop(this)
+    }
+
+    /** Puts − [slider] + and the value readout into a row. Each tap moves one step; hold to keep going. */
+    private fun addStepped(row: LinearLayout, bar: SeekBar, value: TextView, onUser: () -> Unit) {
+        fun step(delta: Int) {
+            val p = (bar.progress + delta).coerceIn(0, bar.max)
+            if (p == bar.progress) return
+            bar.progress = p          // the slider's own listener updates the readout
+            if (!suppress) onUser()
+        }
+        row.addView(stepButton("\u2212", "Decrease") { step(-1) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        row.addView(bar, LinearLayout.LayoutParams(0, dp(44), 1f))
+        row.addView(stepButton("+", "Increase") { step(+1) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        row.addView(value, LinearLayout.LayoutParams(dp(60), WRAP_CONTENT))
+    }
+
+    private fun stepButton(symbol: String, description: String, onStep: () -> Unit): Button {
+        val repeater = object : Runnable {
+            override fun run() {
+                onStep()
+                handler.postDelayed(this, 80)
+            }
+        }
+        return Button(this).apply {
+            text = symbol
+            textSize = 18f
+            minWidth = 0
+            minimumWidth = 0
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(0, 0, 0, 0)
+            contentDescription = description
+            setOnClickListener { onStep() }
+            setOnLongClickListener { handler.post(repeater); true }
+            setOnTouchListener { _, e ->
+                if (e.action == MotionEvent.ACTION_UP || e.action == MotionEvent.ACTION_CANCEL) {
+                    handler.removeCallbacks(repeater)
+                }
+                false
+            }
+        }
     }
 
     /** A labelled slider in 0.5 dB steps. */
@@ -335,7 +379,7 @@ class MainActivity : Activity() {
         row.addView(TextView(this).apply {
             text = label
             textSize = 14f
-        }, LinearLayout.LayoutParams(dp(72), WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(dp(56), WRAP_CONTENT))
 
         val value = TextView(this).apply {
             textSize = 14f
@@ -353,8 +397,7 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(s: SeekBar) {}
             })
         }
-        row.addView(bar, LinearLayout.LayoutParams(0, dp(44), 1f))
-        row.addView(value, LinearLayout.LayoutParams(dp(64), WRAP_CONTENT))
+        addStepped(row, bar, value) { onUserChange(minDb + bar.progress * STEP) }
         return Triple(row, bar, value)
     }
 
